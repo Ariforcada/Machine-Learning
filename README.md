@@ -1,0 +1,1 @@
+Malware project: This project implements a Python-based malware detection pipeline using the RejaFADA dataset (6,827 Java archive files, 1,996 behavioral features). The pipeline automates preprocessing, model training, and evaluation for robust malware classification.
