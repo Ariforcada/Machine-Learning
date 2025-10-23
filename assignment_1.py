@@ -10,8 +10,19 @@ Original file is located at
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
 
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, roc_auc_score, classification_report
+from sklearn.metrics import (
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    accuracy_score,
+    roc_auc_score,
+    classification_report,
+    roc_curve,
+    precision_recall_curve,
+    average_precision_score,
+)
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
@@ -22,16 +33,42 @@ from sklearn.pipeline import Pipeline
 from sklearn import preprocessing
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
-from google.colab import drive
-drive.mount('/content/drive')
+"""This script has been adapted to run outside Colab.
+It now:
+- Loads `mobile_money.csv` from common local paths if available
+- Adds several EDA and model evaluation plots
+- Fixes the hyperparameter (C) plot tick labels
+"""
 
 """**1. READ FILE**
 
-If the file is not contained in the Drive Colab Notebooks of the user, please change the path to include the path where to mobile money cvs file is in order to read it.
+Reads `mobile_money.csv` from a local path. You can place the file in the
+repository root or pass a custom path via the `MOBILE_MONEY_PATH` env var.
 """
 
-path = 'drive/My Drive/Colab Notebooks//mobile_money.csv'
-mobile_money_df = pd.read_csv(path)
+def load_mobile_money_dataframe() -> pd.DataFrame:
+    possible_paths = [
+        Path("mobile_money.csv"),
+        Path("/workspace/mobile_money.csv"),
+        Path("./data/mobile_money.csv"),
+        # Legacy Colab path for reference if running in that environment
+        Path("drive/My Drive/Colab Notebooks//mobile_money.csv"),
+    ]
+    env_path = Path(str(Path.cwd() / Path(
+        (os.environ.get("MOBILE_MONEY_PATH") or "").strip()
+    ))) if 'MOBILE_MONEY_PATH' in os.environ and os.environ.get("MOBILE_MONEY_PATH") else None
+
+    candidates = [p for p in ([env_path] if env_path else []) + possible_paths if p and p.exists()]
+    if not candidates:
+        raise FileNotFoundError(
+            "mobile_money.csv not found. Place it in the repo root or set MOBILE_MONEY_PATH."
+        )
+    return pd.read_csv(candidates[0])
+
+
+import os  # placed after function to avoid unused if module imported
+
+mobile_money_df = load_mobile_money_dataframe()
 
 """**2. DESCRIPTIVE STATS 'mpesa user'**"""
 
@@ -70,6 +107,55 @@ variables_of_interest = [
 
 descriptive_stats1 = mobile_money_df.groupby('mpesa_user')[variables_of_interest].describe()
 print(descriptive_stats1)
+
+"""Additional EDA: class balance, distributions, and correlations"""
+
+# Ensure plotting style
+sns.set(style="whitegrid")
+
+# 3.A Class balance
+plt.figure(figsize=(5, 4))
+mobile_money_df['mpesa_user'].value_counts(dropna=False).sort_index().plot(
+    kind='bar', color=['steelblue', 'orange']
+)
+plt.title('Class Balance: mpesa_user')
+plt.xlabel('mpesa_user')
+plt.ylabel('Count')
+plt.tight_layout()
+plt.show()
+
+# 3.B Numeric distributions by class (key variables)
+numeric_for_dist = [
+    'totexppc',
+    'wkexppc',
+    'wealth',
+    'size',
+    'education_years',
+]
+
+for col in [c for c in numeric_for_dist if c in mobile_money_df.columns]:
+    plt.figure(figsize=(6, 4))
+    sns.kdeplot(
+        data=mobile_money_df.dropna(subset=[col, 'mpesa_user']),
+        x=col,
+        hue='mpesa_user',
+        common_norm=False,
+        fill=True,
+        alpha=0.4,
+    )
+    plt.title(f'Distribution by mpesa_user: {col}')
+    plt.tight_layout()
+    plt.show()
+
+# 3.C Correlation heatmap for numeric variables of interest
+numeric_cols = [c for c in variables_of_interest if c in mobile_money_df.columns and pd.api.types.is_numeric_dtype(mobile_money_df[c])]
+if numeric_cols:
+    plt.figure(figsize=(10, 8))
+    corr = mobile_money_df[numeric_cols].corr()
+    sns.heatmap(corr, cmap='coolwarm', center=0, square=False)
+    plt.title('Correlation Heatmap (variables_of_interest)')
+    plt.tight_layout()
+    plt.show()
 
 """**4. CONSTRUCT THE LOGISTIC CLASSIFIER, RANDOM FOREST CLASSIFIER, LINEAR DISCRIMINANT ANALYSIS**
 
@@ -117,8 +203,11 @@ def test_model(x_train, y_train, x_test, y_test, model_type, model_opts, plot_cm
     res["model"] = model
     res["score"] = model.score(x_test, y_test)
 
-    cm = confusion_matrix(y_test, model.predict(x_test))
-    disp = ConfusionMatrixDisplay(cm, display_labels=None)
+    y_pred = model.predict(x_test)
+    cm = confusion_matrix(y_test, y_pred)
+    # Use sorted unique labels for display
+    labels = np.unique(np.concatenate([np.asarray(y_test), y_pred]))
+    disp = ConfusionMatrixDisplay(cm, display_labels=labels)
     res["disp"] = disp
     if plot_cm: disp.plot()
 
@@ -130,9 +219,15 @@ def test_model(x_train, y_train, x_test, y_test, model_type, model_opts, plot_cm
 
     res["false_pos_rate"] = cm[0, 1]/cm[0].sum()
     res["recall_rate"] = cm[1, 1]/cm[1].sum()
-    res["accuracy_rate"] = accuracy_score(y_test, model.predict(x_test))
+    res["accuracy_rate"] = accuracy_score(y_test, y_pred)
     y_pred_prob = model.predict_proba(x_test)[:, 1]
     res["AUC"] = roc_auc_score(y_test, y_pred_prob)
+    # Add ROC/PR computed arrays for downstream plotting
+    fpr, tpr, _ = roc_curve(y_test, y_pred_prob)
+    precision, recall, _ = precision_recall_curve(y_test, y_pred_prob)
+    res["roc_curve"] = (fpr, tpr)
+    res["pr_curve"] = (precision, recall)
+    res["average_precision"] = average_precision_score(y_test, y_pred_prob)
     return res
 
 models = [
@@ -151,15 +246,17 @@ comp_res = {
 }
 
 trained_models = dict()
+model_results = dict()
 for model, model_opts in models:
-    res = test_model(x_train_scaled, y_train, x_test_scaled, y_test,
-                     model, model_opts)
-    comp_res["Name"].append(model.__name__ + '; '.join([str(v) for v in model_opts.values()]))
+    res = test_model(x_train_scaled, y_train, x_test_scaled, y_test, model, model_opts)
+    name = model.__name__ + (' ' + ', '.join([f'{k}={v}' for k, v in model_opts.items()]) if model_opts else '')
+    comp_res["Name"].append(name if name.strip() else model.__name__)
     comp_res["False Positive Rate"].append(res["false_pos_rate"])
     comp_res["Recall Rate"].append(res["recall_rate"])
     comp_res["Accuracy Rate"].append(res["accuracy_rate"])
     comp_res["AUC"].append(res["AUC"])
-    trained_models[comp_res["Name"][-1]] = res["model"]
+    trained_models[model.__name__] = res["model"]
+    model_results[model.__name__] = res
 
 """**5. ACCURACY RATE AND AUC CRITERIA**
 
@@ -168,40 +265,76 @@ for model, model_opts in models:
 5.2. Extra: Confusion matrices of the three criteria.
 """
 
-#5.1. Show a Dataframe of the Results dictionary
+#5.1. Show a DataFrame of the Results dictionary and plot comparison bars
 
-pd.DataFrame(comp_res).set_index("Name")
+comp_df = pd.DataFrame(comp_res).set_index("Name")
+print(comp_df)
 
-#5.2. Confusion matrix
+plt.figure(figsize=(9, 5))
+comp_df[["Accuracy Rate", "AUC", "Recall Rate", "False Positive Rate"]].plot(
+    kind="bar", figsize=(11, 6), colormap="viridis"
+)
+plt.title("Model Comparison")
+plt.ylabel("Score")
+plt.tight_layout()
+plt.show()
 
-res_log = test_model(x_train_scaled, y_train, x_test_scaled, y_test,
-                 LogisticRegression, {}, plot_cm=True)
+#5.2. Confusion matrices, ROC and PR curves
 
-res_forest = test_model(x_train_scaled, y_train, x_test_scaled, y_test,
-                 RandomForestClassifier, {}, plot_cm=True)
+for model_name in ["LogisticRegression", "RandomForestClassifier", "LinearDiscriminantAnalysis"]:
+    res = model_results[model_name]
+    res["disp"].plot()
+    plt.title(f"Confusion Matrix - {model_name}")
+    plt.tight_layout()
+    plt.show()
 
-res_linear = test_model(x_train_scaled, y_train, x_test_scaled, y_test,
-                 LinearDiscriminantAnalysis, {}, plot_cm=True)
+# ROC curves
+plt.figure(figsize=(7, 5))
+for model_name in ["LogisticRegression", "RandomForestClassifier", "LinearDiscriminantAnalysis"]:
+    fpr, tpr = model_results[model_name]["roc_curve"]
+    auc_val = comp_df.loc[comp_df.index.str.startswith(model_name), "AUC"].iloc[0]
+    plt.plot(fpr, tpr, label=f"{model_name} (AUC={auc_val:.2f})")
+plt.plot([0, 1], [0, 1], linestyle='--', color='grey')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate (Recall)')
+plt.title('ROC Curves')
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# Precision-Recall curves
+plt.figure(figsize=(7, 5))
+for model_name in ["LogisticRegression", "RandomForestClassifier", "LinearDiscriminantAnalysis"]:
+    precision, recall = model_results[model_name]["pr_curve"]
+    ap = model_results[model_name]["average_precision"]
+    plt.plot(recall, precision, label=f"{model_name} (AP={ap:.2f})")
+plt.xlabel('Recall')
+plt.ylabel('Precision')
+plt.title('Precision-Recall Curves')
+plt.legend()
+plt.tight_layout()
+plt.show()
 
 """**6. RELATIVE IMPORTANCE OF EACH PREDICTOR**
 
 .feature_importances_ gives the importance of each feature, indicating how much it contributes to the model’s decision-making process.
 """
 
-# Get feature importances from the random forest model
+# Get feature importances from the random forest model (top 20)
 random_forest_model = trained_models['RandomForestClassifier']
 importances = random_forest_model.feature_importances_
 feature_names = x_encoded.columns.tolist()
 indices = np.argsort(importances)[::-1]
+top_n = 20 if len(indices) >= 20 else len(indices)
+top_idx = indices[:top_n]
 
-# Set up the plot
-plt.figure(figsize=(10, 8))
-plt.title("Feature Importances from Random Forest Model")
-plt.bar(range(len(importances)), importances[indices], color="skyblue", align="center")
-plt.xticks(range(len(importances)), [feature_names[i] for i in indices], rotation=90)
-plt.xlim([-1, len(importances)])
-plt.ylabel("Importance")
-plt.xlabel("Features")
+plt.figure(figsize=(10, 6))
+plt.title("Top Feature Importances (RandomForest)")
+sorted_pairs = sorted([(feature_names[i], importances[i]) for i in top_idx], key=lambda t: t[1])
+labels_sorted = [p[0] for p in sorted_pairs]
+values_sorted = [p[1] for p in sorted_pairs]
+plt.barh(labels_sorted, values_sorted, color="skyblue")
+plt.xlabel("Importance")
 plt.tight_layout()
 plt.show()
 
@@ -332,7 +465,9 @@ plt.title('Effect of C on Model Performance')
 plt.xlabel('C Value')
 plt.ylabel('Mean Cross-Validation Score')
 plt.xscale('log')  # log scale for better visibility
-plt.xticks(subset['param_C'])
+# Use all unique C values for ticks, not just last subset
+all_c_values = sorted(results['param_C'].unique(), key=lambda v: float(v))
+plt.xticks(all_c_values)
 plt.legend()
 plt.grid()
 plt.tight_layout()
