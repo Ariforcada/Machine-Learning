@@ -170,6 +170,44 @@ plt.xlabel('Date')
 plt.ylabel('Date')
 plt.show()
 
+"""Enhanced similarity visualizations: triangular heatmap and clustermap"""
+
+# Triangular (lower) heatmap to focus on unique pairs
+mask_triangular = np.triu(np.ones_like(similarity_df, dtype=bool))
+plt.figure(figsize=(10, 8))
+plt.title('Cosine Similarity (Lower Triangle) of News Headlines by Day')
+sns.heatmap(
+    similarity_df,
+    mask=mask_triangular,
+    cmap='coolwarm',
+    annot=False,
+    square=True,
+    linewidths=0.5,
+    cbar_kws={'label': 'Similarity'}
+)
+plt.xlabel('Date')
+plt.ylabel('Date')
+plt.xticks(rotation=45, ha='right')
+plt.yticks(rotation=0)
+plt.tight_layout()
+plt.show()
+
+# Clustered heatmap with dendrograms to reveal day groupings
+try:
+    clustered = sns.clustermap(
+        similarity_df,
+        cmap='coolwarm',
+        figsize=(10, 10),
+        cbar_kws={'label': 'Similarity'}
+    )
+    plt.setp(clustered.ax_heatmap.get_xticklabels(), rotation=45, ha='right')
+    plt.setp(clustered.ax_heatmap.get_yticklabels(), rotation=0)
+    clustered.ax_heatmap.set_title('Clustered Cosine Similarity of News Headlines by Day')
+    plt.show()
+except Exception as clustering_error:
+    # If scipy linkage is unavailable, skip clustering to keep script runnable
+    print(f"Clustermap skipped due to: {clustering_error}")
+
 """Find the 3 pairs of dates with the most textual similarity"""
 
 # Remove the diagonal (same-date comparisons)
@@ -232,14 +270,18 @@ nyt_covid_grouped['covid_uncertainty_index'] = nyt_covid_grouped['covid_articles
 # Print the result to see the Covid Uncertainty Index for each day
 print(nyt_covid_grouped[['date', 'covid_uncertainty_index']].head())
 
-# Plot the Covid Uncertainty Index over time
-plt.figure(figsize=(8, 5))
-plt.plot(nyt_covid_grouped['date'], nyt_covid_grouped['covid_uncertainty_index'])
-plt.title('Covid Policy Uncertainty Index (EPU)', fontsize=12)
-plt.xlabel('Date', fontsize=10)
-plt.ylabel('Covid Index (Fraction of Covid-related articles)', fontsize=10)
+# Plot the Covid Uncertainty Index over time with 7-day smoothing
+nyt_covid_grouped = nyt_covid_grouped.sort_values('date')
+nyt_covid_grouped['covid_index_ma7'] = nyt_covid_grouped['covid_uncertainty_index'].rolling(window=7, min_periods=1).mean()
 
-# Show the plot
+plt.figure(figsize=(10, 6))
+plt.plot(nyt_covid_grouped['date'], nyt_covid_grouped['covid_uncertainty_index'], label='Daily', color='tab:blue', alpha=0.4)
+plt.plot(nyt_covid_grouped['date'], nyt_covid_grouped['covid_index_ma7'], label='7-day MA', color='tab:blue')
+plt.title('Covid-Related Article Share Over Time', fontsize=12)
+plt.xlabel('Date', fontsize=10)
+plt.ylabel('Covid Article Share', fontsize=10)
+plt.legend()
+plt.grid(True, axis='y', alpha=0.3)
 plt.tight_layout()
 plt.show()
 
@@ -282,14 +324,32 @@ nyt_epu_grouped['epu_uncertainty_index'] = nyt_epu_grouped['epu_articles'] / nyt
 # Display the Economic Policy Uncertainty Index
 print(nyt_epu_grouped[['date','epu_uncertainty_index']].head())
 
-# Plot the Economic Policy Uncertainty Index over time
-plt.figure(figsize=(8, 5))
-plt.plot(nyt_epu_grouped['date'], nyt_epu_grouped['epu_uncertainty_index'])
-plt.title('Economic Policy Uncertainty Index (EPU)', fontsize=12)
-plt.xlabel('Date', fontsize=10)
-plt.ylabel('EPU Index (Fraction of Covid-related articles)', fontsize=10)
+# Plot the EPU Index over time with 7-day smoothing
+nyt_epu_grouped = nyt_epu_grouped.sort_values('date')
+nyt_epu_grouped['epu_index_ma7'] = nyt_epu_grouped['epu_uncertainty_index'].rolling(window=7, min_periods=1).mean()
 
-# Show the plot
+plt.figure(figsize=(10, 6))
+plt.plot(nyt_epu_grouped['date'], nyt_epu_grouped['epu_uncertainty_index'], label='Daily', color='tab:orange', alpha=0.4)
+plt.plot(nyt_epu_grouped['date'], nyt_epu_grouped['epu_index_ma7'], label='7-day MA', color='tab:orange')
+plt.title('Economic Policy Uncertainty Article Share Over Time', fontsize=12)
+plt.xlabel('Date', fontsize=10)
+plt.ylabel('EPU Article Share', fontsize=10)
+plt.legend()
+plt.grid(True, axis='y', alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# Combined overlay: Covid vs EPU (smoothed)
+merged_overlay = pd.merge(nyt_covid_grouped[['date','covid_index_ma7']],
+                          nyt_epu_grouped[['date','epu_index_ma7']], on='date', how='inner')
+plt.figure(figsize=(10, 6))
+plt.plot(merged_overlay['date'], merged_overlay['covid_index_ma7'], label='Covid (7-day MA)', color='tab:blue')
+plt.plot(merged_overlay['date'], merged_overlay['epu_index_ma7'], label='EPU (7-day MA)', color='tab:orange')
+plt.title('Covid vs EPU Article Share (7-day Smoothed)')
+plt.xlabel('Date')
+plt.ylabel('Share of Articles')
+plt.legend()
+plt.grid(True, axis='y', alpha=0.3)
 plt.tight_layout()
 plt.show()
 
@@ -323,6 +383,23 @@ sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt='.2f', cbar=Tru
 plt.title('Correlation Matrix between Covid Uncertainty Index, CEPI, and Returns')
 plt.show()
 
+# Distributions of indices and returns
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+sns.histplot(results_df['covid_uncertainty_index'].dropna(), kde=True, ax=axes[0], color='tab:blue')
+axes[0].set_title('Covid Index Distribution')
+axes[0].set_xlabel('Covid Article Share')
+
+sns.histplot(results_df['epu_uncertainty_index'].dropna(), kde=True, ax=axes[1], color='tab:orange')
+axes[1].set_title('EPU Index Distribution')
+axes[1].set_xlabel('EPU Article Share')
+
+sns.histplot(results_df['Return'].dropna(), kde=True, ax=axes[2], color='tab:green')
+axes[2].set_title('S&P 500 Returns Distribution')
+axes[2].set_xlabel('Daily Return (%)')
+
+plt.tight_layout()
+plt.show()
+
 # Plot the variables over time to visually inspect their relationships
 plt.figure(figsize=(14, 8))
 
@@ -350,6 +427,56 @@ plt.xlabel('Date')
 plt.ylabel('Returns')
 plt.legend()
 
+plt.tight_layout()
+plt.show()
+
+# Scatter/regression and joint density plots
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+# Regression plots (with lowess trend via seaborn's regplot if available)
+sns.regplot(ax=axes[0], x=results_df['covid_uncertainty_index'], y=results_df['Return'], scatter_kws={'alpha': 0.5}, line_kws={'color':'tab:blue'})
+axes[0].set_title('Return vs Covid Index')
+axes[0].set_xlabel('Covid Article Share')
+axes[0].set_ylabel('S&P 500 Daily Return (%)')
+
+sns.regplot(ax=axes[1], x=results_df['epu_uncertainty_index'], y=results_df['Return'], scatter_kws={'alpha': 0.5}, line_kws={'color':'tab:orange'})
+axes[1].set_title('Return vs EPU Index')
+axes[1].set_xlabel('EPU Article Share')
+axes[1].set_ylabel('S&P 500 Daily Return (%)')
+
+plt.tight_layout()
+plt.show()
+
+try:
+    # Joint density plots with KDE contours
+    g1 = sns.jointplot(x='covid_uncertainty_index', y='Return', data=results_df, kind='kde', fill=True, height=5, cmap='Blues')
+    g1.fig.suptitle('Joint Density: Return vs Covid Index')
+    plt.tight_layout()
+    plt.show()
+
+    g2 = sns.jointplot(x='epu_uncertainty_index', y='Return', data=results_df, kind='kde', fill=True, height=5, cmap='Oranges')
+    g2.fig.suptitle('Joint Density: Return vs EPU Index')
+    plt.tight_layout()
+    plt.show()
+except Exception as e:
+    print(f"Joint density plots skipped: {e}")
+
+# Rolling correlations between indices and S&P 500 returns
+window_days = 14
+rolling_corr = pd.DataFrame({
+    'corr_return_covid': results_df['Return'].rolling(window_days, min_periods=5).corr(results_df['covid_uncertainty_index']),
+    'corr_return_epu': results_df['Return'].rolling(window_days, min_periods=5).corr(results_df['epu_uncertainty_index'])
+})
+
+plt.figure(figsize=(12, 6))
+plt.plot(rolling_corr.index, rolling_corr['corr_return_covid'], label=f'Return vs Covid (roll {window_days}d)', color='tab:blue')
+plt.plot(rolling_corr.index, rolling_corr['corr_return_epu'], label=f'Return vs EPU (roll {window_days}d)', color='tab:orange')
+plt.axhline(0, color='black', linewidth=1, linestyle='--', alpha=0.5)
+plt.title('Rolling Correlations between S&P 500 Returns and News Indices')
+plt.xlabel('Date')
+plt.ylabel('Correlation')
+plt.legend()
+plt.grid(True, axis='y', alpha=0.3)
 plt.tight_layout()
 plt.show()
 
@@ -389,10 +516,18 @@ daily_sentiment_covid = covid_sentiment_covid_df.groupby('date')[['negative', 'n
 daily_sentiment_covid = daily_sentiment_covid.reindex(full_date_range)
 
 # Plotting the daily sentiment scores
-plt.figure(figsize=(10, 6))
-plt.plot(daily_sentiment_covid.index, daily_sentiment_covid['negative'], label='Negative', color='red', alpha=0.7)
-plt.plot(daily_sentiment_covid.index, daily_sentiment_covid['neutral'], label='Neutral', color='gray', alpha=0.7)
-plt.plot(daily_sentiment_covid.index, daily_sentiment_covid['positive'], label='Positive', color='green', alpha=0.7)
+plt.figure(figsize=(12, 6))
+
+# 7-day rolling averages for smoother sentiment trends
+sent_ma = daily_sentiment_covid.rolling(window=7, min_periods=1).mean()
+
+plt.plot(daily_sentiment_covid.index, daily_sentiment_covid['negative'], label='Negative (Daily)', color='red', alpha=0.2)
+plt.plot(daily_sentiment_covid.index, daily_sentiment_covid['neutral'], label='Neutral (Daily)', color='gray', alpha=0.2)
+plt.plot(daily_sentiment_covid.index, daily_sentiment_covid['positive'], label='Positive (Daily)', color='green', alpha=0.2)
+
+plt.plot(sent_ma.index, sent_ma['negative'], label='Negative (7d MA)', color='red')
+plt.plot(sent_ma.index, sent_ma['neutral'], label='Neutral (7d MA)', color='gray')
+plt.plot(sent_ma.index, sent_ma['positive'], label='Positive (7d MA)', color='green')
 
 # Customizing the plot
 plt.title('Daily Sentiment Analysis of Covid-Related Articles')
@@ -406,25 +541,37 @@ plt.tight_layout()
 # Show the plot
 plt.show()
 
-# Create a figure for the stacked bar plot
-plt.figure(figsize=(10, 6))
-
-# Plot the stacked bars for negative, neutral, and positive sentiment
-daily_sentiment_covid[['negative', 'neutral', 'positive']].plot(kind='bar', stacked=True,
-                                                                      color=['red', 'gray', 'green'],
-                                                                      alpha=0.7, ax=plt.gca())
-
-# Customizing the plot
-plt.title('Normalized Daily Sentiment Analysis of Covid-Related Articles')
+# Stacked area chart for sentiment composition
+plt.figure(figsize=(12, 6))
+plt.stackplot(daily_sentiment_covid.index,
+              daily_sentiment_covid['negative'],
+              daily_sentiment_covid['neutral'],
+              daily_sentiment_covid['positive'],
+              labels=['Negative', 'Neutral', 'Positive'],
+              colors=['red', 'gray', 'green'],
+              alpha=0.6)
+plt.title('Daily Sentiment Composition (Covid-Related Articles)')
 plt.xlabel('Date')
-plt.ylabel('Normalized Sentiment Score')
-plt.legend(title='Sentiment', loc='upper left', labels=['Negative', 'Neutral', 'Positive'])
-plt.grid(True, axis='y')  # Show grid only on the y-axis
+plt.ylabel('Average Sentiment Score')
+plt.legend(loc='upper left')
+plt.grid(True, axis='y', alpha=0.3)
 plt.xticks(rotation=45)
-plt.gca().set_xticklabels([date.strftime('%Y-%m-%d') for date in daily_sentiment.index])
 plt.tight_layout()
+plt.show()
 
-# Show the plot
+# Net sentiment and polarity balance
+net_sentiment = daily_sentiment_covid['positive'] - daily_sentiment_covid['negative']
+polarity_balance = (daily_sentiment_covid['positive'] - daily_sentiment_covid['negative']) / (daily_sentiment_covid[['positive','negative']].sum(axis=1).replace(0, np.nan))
+
+plt.figure(figsize=(12, 4))
+plt.plot(net_sentiment.index, net_sentiment, label='Net Sentiment (pos - neg)', color='tab:purple')
+plt.axhline(0, color='black', linewidth=1, linestyle='--', alpha=0.5)
+plt.title('Net Sentiment Over Time')
+plt.xlabel('Date')
+plt.ylabel('Net Sentiment')
+plt.legend()
+plt.grid(True, axis='y', alpha=0.3)
+plt.tight_layout()
 plt.show()
 
 # Aggregate sentiment over the entire period (mean of negative, neutral, and positive)
